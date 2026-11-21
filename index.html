@@ -1,1 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Grammar & Style Checker</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 800px; margin: 40px auto; padding: 0 16px; background: #f6f7fb; color: #222; }
+  h1 { margin-bottom: 4px; }
+  .sub { color: #666; margin-top: 0; }
+  textarea { width: 100%; height: 220px; padding: 12px; font-size: 16px; line-height: 1.5; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; resize: vertical; }
+  .bar { display: flex; gap: 10px; align-items: center; margin: 12px 0; flex-wrap: wrap; }
+  button { background: #4f46e5; color: #fff; border: none; padding: 10px 18px; border-radius: 8px; font-size: 15px; cursor: pointer; }
+  button:hover { background: #4338ca; }
+  button:disabled { background: #999; cursor: wait; }
+  button.secondary { background: #fff; color: #4f46e5; border: 1px solid #4f46e5; }
+  select { padding: 9px; border-radius: 8px; border: 1px solid #ccc; font-size: 15px; }
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+  .tabs .tab { background: #fff; color: #333; border: 1px solid #ddd; padding: 6px 12px; font-size: 14px; }
+  .tabs .tab.active { background: #4f46e5; color: #fff; border-color: #4f46e5; }
+  .issue { background: #fff; border-left: 5px solid #ef4444; border-radius: 6px; padding: 12px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .tag { display: inline-block; font-size: 12px; font-weight: 600; color: #fff; padding: 2px 8px; border-radius: 10px; margin-bottom: 6px; }
+  .context { margin: 6px 0; color: #444; }
+  .context mark { background: #fde68a; padding: 0 2px; border-radius: 3px; }
+  .fix { background: #e0e7ff; color: #3730a3; padding: 5px 10px; margin: 4px 6px 0 0; font-size: 14px; }
+  .fix:hover { background: #c7d2fe; }
+  .ok { color: #16a34a; font-weight: 600; }
+  .hint { color: #666; }
+  footer { margin-top: 30px; font-size: 13px; color: #888; }
+</style>
+</head>
+<body>
+  <h1>Grammar & Style Checker</h1>
+  <p class="sub">Checks grammar, spelling, capitalization, punctuation and US/UK style.</p>
 
+  <textarea id="text">i went to the centre on monday and bought a colour TV .My friend Mr Khan said "its great". we was happy!!</textarea>
+
+  <div class="bar">
+    <select id="lang">
+      <option value="en-US">American English (US)</option>
+      <option value="en-GB">British English (UK)</option>
+    </select>
+    <button id="checkBtn">Check text</button>
+    <button id="fixAllBtn" class="secondary" hidden>Fix all</button>
+    <button id="copyBtn" class="secondary">Copy text</button>
+    <span id="status"></span>
+  </div>
+
+  <div class="tabs" id="tabs"></div>
+  <div id="results"></div>
+
+  <footer>Grammar engine: LanguageTool API. Your text is sent to LanguageTool's servers for checking.</footer>
+
+<script>
+const API = 'https://api.languagetool.org/v2/check';
+
+const CATEGORIES = {
+  grammar:        { label: 'Grammar',        color: '#ef4444' },
+  spelling:       { label: 'Spelling',       color: '#3b82f6' },
+  capitalization: { label: 'Capitalization', color: '#8b5cf6' },
+  punctuation:    { label: 'Punctuation',    color: '#10b981' },
+  usuk:           { label: 'US/UK style',    color: '#f59e0b' },
+  style:          { label: 'Style',          color: '#6b7280' }
+};
+
+/* ================= US / UK WORD LIST =================
+   Add your own words here. Format: US spelling -> UK spelling */
+const US_TO_UK = {};
+const add = (us, uk) => { US_TO_UK[us] = uk; };
+
+// color/colour, favor/favour ...
+['color','favor','flavor','honor','humor','labor','neighbor','behavior','rumor','harbor','vapor','endeavor','parlor','savor']
+  .forEach(w => ['', 's', 'ed', 'ing', 'ful', 'ite', 'ites', 'able', 'hood']
+  .forEach(s => add(w + s, w.replace(/or$/, 'our') + s)));
+
+// organize/organise ...
+['organiz','realiz','recogniz','apologiz','emphasiz','prioritiz','categoriz','minimiz','maximiz','optimiz',
+ 'summariz','criticiz','memoriz','finaliz','customiz','authoriz','utiliz','specializ','visualiz','standardiz','civiliz']
+  .forEach(w => ['e', 'es', 'ed', 'ing', 'ation', 'ations', 'er', 'ers']
+  .forEach(s => add(w + s, w.replace(/z$/, 's') + s)));
+
+// analyze/analyse
+['analy', 'paraly'].forEach(w => ['e', 'es', 'ed', 'ing'].forEach(s => add(w + 'z' + s, w + 's' + s)));
+
+// center/centre ...
+['center','theater','fiber','liter','caliber','somber','meager','luster','specter']
+  .forEach(w => ['', 's'].forEach(s => add(w + s, w.replace(/er$/, 're') + s)));
+
+// traveled/travelled ...
+['travel','cancel','model','label','fuel','signal','marvel','counsel']
+  .forEach(w => ['ed', 'ing', 'er', 'ers', 'or', 'ors'].forEach(s => add(w + s, w + 'l' + s)));
+
+// others
+[['defense','defence'],['offense','offence'],['pretense','pretence'],['gray','grey'],['jewelry','jewellery'],
+ ['aluminum','aluminium'],['pajamas','pyjamas'],['mustache','moustache'],['skeptical','sceptical'],
+ ['aging','ageing'],['enrollment','enrolment'],['fulfill','fulfil'],['catalog','catalogue'],['plow','plough'],
+ ['mom','mum'],['airplane','aeroplane'],['cozy','cosy'],['donut','doughnut'],['artifact','artefact'],
+ ['mold','mould'],['willful','wilful'],['math','maths']].forEach(([us, uk]) => add(us, uk));
+
+const UK_TO_US = Object.fromEntries(Object.entries(US_TO_UK).map(([us, uk]) => [uk, us]));
+
+// Words that should always be capitalized
+const PROPER_WORDS = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday',
+  'january','february','april','june','july','september','october','november','december',
+  'english','american','british','urdu','pakistan','pakistani','islam','christmas','ramadan'];
+
+/* ================= HELPERS ================= */
+const textEl = document.getElementById('text');
+const langEl = document.getElementById('lang');
+const btn = document.getElementById('checkBtn');
+const fixAllBtn = document.getElementById('fixAllBtn');
+const copyBtn = document.getElementById('copyBtn');
+const statusEl = document.getElementById('status');
+const tabsEl = document.getElementById('tabs');
+const resultsEl = document.getElementById('results');
+
+let issues = [];
+let filter = 'all';
+
+const escapeHtml = s => s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const mk = (offset, length, message, replacements, category) => ({ offset, length, message, replacements, category });
+
+function matchCase(src, word) {
+  if (src.length > 1 && src === src.toUpperCase()) return word.toUpperCase();
+  if (src[0] === src[0].toUpperCase()) return word[0].toUpperCase() + word.slice(1);
+  return word;
+}
+
+function scan(re, text, fn) {
+  re.lastIndex = 0;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    fn(m);
+    if (m[0].length === 0) re.lastIndex++;
+  }
+}
+
+/* ================= CUSTOM CHECKS ================= */
+function customChecks(text, variant) {
+  const usuk = [], other = [];
+  const isUS = variant === 'en-US';
+
+  // --- US/UK spelling ---
+  const dict = isUS ? UK_TO_US : US_TO_UK;
+  scan(/[A-Za-z]+/g, text, m => {
+    const target = dict[m[0].toLowerCase()];
+    if (target) {
+      const fix = matchCase(m[0], target);
+      usuk.push(mk(m.index, m[0].length,
+        `"${m[0]}" is ${isUS ? 'British' : 'American'} spelling. ${isUS ? 'American' : 'British'} English uses "${fix}".`,
+        [fix], 'usuk'));
+    }
+  });
+
+  // --- US/UK punctuation ---
+  if (isUS) {
+    scan(/(["”])([.,])/g, text, m => usuk.push(mk(m.index, 2,
+      'In American English, periods and commas go inside the closing quotation mark.', [m[2] + m[1]], 'usuk')));
+    scan(/\b(Mr|Mrs|Ms|Dr)\b(?!\.)/g, text, m => usuk.push(mk(m.index, m[0].length,
+      `American English puts a period after "${m[0]}".`, [m[0] + '.'], 'usuk')));
+  } else {
+    scan(/\b(Mr|Mrs|Ms|Dr)\./g, text, m => usuk.push(mk(m.index, m[0].length,
+      `British English usually writes "${m[1]}" without a full stop.`, [m[1]], 'usuk')));
+  }
+
+  // --- Capitalization ---
+  scan(/(?<![\w.'’])i(?![\w.])/g, text, m =>
+    other.push(mk(m.index, 1, 'The word "I" is always capitalized.', ['I'], 'capitalization')));
+
+  scan(/(^|[.!?]["”’')]*\s+)([a-z])/g, text, m => {
+    const pos = m.index + m[1].length;
+    const before = text.slice(0, pos);
+    if (/\b(e\.g|i\.e|etc|vs|approx|Mr|Mrs|Ms|Dr|St)\.["”’')]*\s+$/i.test(before)) return;
+    if (/(\.\.\.|…)\s+$/.test(before)) return;
+    other.push(mk(pos, 1, 'Start a sentence with a capital letter.', [m[2].toUpperCase()], 'capitalization'));
+  });
+
+  scan(new RegExp('\\b(' + PROPER_WORDS.join('|') + ')\\b', 'g'), text, m =>
+    other.push(mk(m.index, m[0].length, `"${m[0]}" should be capitalized.`,
+      [m[0][0].toUpperCase() + m[0].slice(1)], 'capitalization')));
+
+  // --- Punctuation ---
+  scan(/[ \t]+([,;:!?]|\.(?!\.))/g, text, m =>
+    other.push(mk(m.index, m[0].length, 'Remove the space before this punctuation mark.', [m[1]], 'punctuation')));
+
+  scan(/([,;!?])(?=[A-Za-z])/g, text, m =>
+    other.push(mk(m.index, 1, 'Add a space after this punctuation mark.', [m[1] + ' '], 'punctuation')));
+
+  scan(/([a-z])\.([A-Z][a-z])/g, text, m =>
+    other.push(mk(m.index + 1, 1, 'Add a space after the period.', ['. '], 'punctuation')));
+
+  scan(/([!?,;])\1+/g, text, m =>
+    other.push(mk(m.index, m[0].length, 'Avoid repeating punctuation marks.', [m[1]], 'punctuation')));
+
+  scan(/(?<!\.)\.\.(?!\.)/g, text, m =>
+    other.push(mk(m.index, 2, 'Use one period, or three for an ellipsis.', ['.', '...'], 'punctuation')));
+
+  scan(/(\S)( {2,})(?=\S)/g, text, m =>
+    other.push(mk(m.index + 1, m[2].length, 'Use a single space between words.', [' '], 'punctuation')));
+
+  const trimmed = text.replace(/\s+$/, '');
+  if (trimmed && /[A-Za-z0-9]$/.test(trimmed)) {
+    const last = trimmed.length - 1;
+    other.push(mk(last, 1, 'End your text with a punctuation mark.', [trimmed[last] + '.'], 'punctuation'));
+  }
+
+  return { usuk, other };
+}
+
+/* ================= LANGUAGETOOL ================= */
+function categorize(m) {
+  const id = (m.rule.category && m.rule.category.id) || '';
+  const type = m.rule.issueType || '';
+  if (id === 'CASING') return 'capitalization';
+  if (id === 'PUNCTUATION' || id === 'TYPOGRAPHY') return 'punctuation';
+  if (/AMERICAN|BRITISH/.test(id)) return 'usuk';
+  if (id === 'TYPOS' || type === 'misspelling') return 'spelling';
+  if (type === 'style' || /STYLE|REDUNDANCY|COLLOQUIAL/.test(id)) return 'style';
+  return 'grammar';
+}
+
+function mergeIssues(groups) {
+  const kept = [];
+  const overlaps = (a, b) =>
+    a.offset < b.offset + Math.max(b.length, 1) && b.offset < a.offset + Math.max(a.length, 1);
+  groups.flat().forEach(i => { if (!kept.some(k => overlaps(k, i))) kept.push(i); });
+  return kept.sort((a, b) => a.offset - b.offset);
+}
+
+async function checkText() {
+  const text = textEl.value;
+  if (!text.trim()) { statusEl.textContent = 'Please enter some text.'; return; }
+
+  const variant = langEl.value;
+  btn.disabled = true;
+  statusEl.textContent = 'Checking...';
+
+  let ltIssues = [], warning = '';
+  try {
+    const res = await fetch(API, { method: 'POST', body: new URLSearchParams({ text, language: variant }) });
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+    ltIssues = data.matches.map(m =>
+      mk(m.offset, m.length, m.message, m.replacements.map(r => r.value), categorize(m)));
+  } catch (e) {
+    warning = 'Grammar server is busy, so only basic checks ran. Try again in a minute.';
+  }
+
+  const custom = customChecks(text, variant);
+  issues = mergeIssues([custom.usuk, ltIssues, custom.other]);
+  statusEl.textContent = warning || (issues.length ? `${issues.length} issue${issues.length > 1 ? 's' : ''} found` : '');
+  btn.disabled = false;
+  render();
+}
+
+/* ================= DISPLAY ================= */
+function render() {
+  const counts = {};
+  issues.forEach(i => counts[i.category] = (counts[i.category] || 0) + 1);
+  if (filter !== 'all' && !counts[filter]) filter = 'all';
+
+  tabsEl.innerHTML = '';
+  resultsEl.innerHTML = '';
+
+  if (!issues.length) {
+    resultsEl.innerHTML = '<p class="ok">✓ No problems found!</p>';
+    fixAllBtn.hidden = true;
+    return;
+  }
+  fixAllBtn.hidden = false;
+
+  const makeTab = (key, label, n) => {
+    const b = document.createElement('button');
+    b.className = 'tab' + (filter === key ? ' active' : '');
+    b.textContent = `${label} (${n})`;
+    b.onclick = () => { filter = key; render(); };
+    tabsEl.appendChild(b);
+  };
+  makeTab('all', 'All', issues.length);
+  for (const [key, c] of Object.entries(CATEGORIES)) if (counts[key]) makeTab(key, c.label, counts[key]);
+
+  const text = textEl.value;
+  const shown = filter === 'all' ? issues : issues.filter(i => i.category === filter);
+
+  shown.forEach(is => {
+    const cat = CATEGORIES[is.category];
+    const start = Math.max(0, is.offset - 30);
+    const end = Math.min(text.length, is.offset + is.length + 30);
+
+    const div = document.createElement('div');
+    div.className = 'issue';
+    div.style.borderLeftColor = cat.color;
+    div.innerHTML = `
+      <span class="tag" style="background:${cat.color}">${cat.label}</span>
+      <div><strong>${escapeHtml(is.message)}</strong></div>
+      <div class="context">…${escapeHtml(text.slice(start, is.offset))}<mark>${escapeHtml(text.slice(is.offset, is.offset + is.length)) || '&nbsp;'}</mark>${escapeHtml(text.slice(is.offset + is.length, end))}…</div>
+      <div class="fixes"></div>`;
+
+    const fixesEl = div.querySelector('.fixes');
+    is.replacements.slice(0, 4).forEach(r => {
+      const b = document.createElement('button');
+      b.className = 'fix';
+      b.textContent = r.trim() === '' ? (r === '' ? '(remove)' : '(single space)') : r;
+      b.onclick = () => applyFix(is, r);
+      fixesEl.appendChild(b);
+    });
+    resultsEl.appendChild(div);
+  });
+}
+
+function applyFix(is, value) {
+  const t = textEl.value;
+  textEl.value = t.slice(0, is.offset) + value + t.slice(is.offset + is.length);
+  checkText();
+}
+
+function fixAll() {
+  const shown = filter === 'all' ? issues : issues.filter(i => i.category === filter);
+  let t = textEl.value;
+  shown.filter(i => i.replacements.length)
+       .sort((a, b) => b.offset - a.offset)
+       .forEach(i => { t = t.slice(0, i.offset) + i.replacements[0] + t.slice(i.offset + i.length); });
+  textEl.value = t;
+  checkText();
+}
+
+/* ================= EVENTS ================= */
+btn.addEventListener('click', checkText);
+fixAllBtn.addEventListener('click', fixAll);
+langEl.addEventListener('change', () => { if (issues.length) checkText(); });
+copyBtn.addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(textEl.value); copyBtn.textContent = 'Copied!'; }
+  catch { copyBtn.textContent = 'Copy failed'; }
+  setTimeout(() => copyBtn.textContent = 'Copy text', 1500);
+});
+textEl.addEventListener('input', () => {
+  if (issues.length) {
+    issues = [];
+    tabsEl.innerHTML = '';
+    fixAllBtn.hidden = true;
+    statusEl.textContent = '';
+    resultsEl.innerHTML = '<p class="hint">Text changed. Click "Check text" again.</p>';
+  }
+});
+textEl.addEventListener('keydown', e => { if (e.ctrlKey && e.key === 'Enter') checkText(); });
+</script>
+</body>
+</html>
